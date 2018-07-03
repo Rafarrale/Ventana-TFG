@@ -45,6 +45,8 @@ String estadoAlarma;
 char macEsp[10];
 String estadoAlarmaTopic;
 String mensajeEnvio;
+String aux;
+
 
 /* ReedRelay */
 static const char *activar = "I";
@@ -143,7 +145,6 @@ void setup()
 	/*COMPRUEBA si es SSID o PSK correcto*/
 	int validaSSID = 0;
 	int validaPsk = 0;
-	String aux;
 	char *cadAuxSSID;
 	for (int i = 0; i < MEM_SSID; i++)
 	{
@@ -373,7 +374,7 @@ void readReedRelay()
 			{
 				mensajeEnvio = "";
 				mensajeEnvio = alarma + '#' + esid + '#' + activar + '#';
-				Serial.println(mensajeEnvio);
+				Serial.println("Publish: " + mensajeEnvio);
 				client.publish(ALARMA, (char *)mensajeEnvio.c_str(), false, 2);
 				pasaAlarma = false;
 				cerradoAlarma = true;
@@ -386,7 +387,7 @@ void readReedRelay()
 				pasaAlarma = true;
 				mensajeEnvio = "";
 				mensajeEnvio = alarma + '#' + esid + '#' + cerrado + '#';
-				Serial.println(mensajeEnvio);
+				Serial.println("Publish: " + mensajeEnvio);
 				client.publish(ALARMA, (char *)mensajeEnvio.c_str(), false, 2);
 				cerradoAlarma = false;
 			}
@@ -544,7 +545,8 @@ void WiFiEvent(WiFiEvent_t event)
 void reconnectWiFi()
 {
 	Serial.println("reconectando WiFi");
-	WiFi.reconnect();
+	WiFi.disconnect(true);
+	WiFi.begin(cadenaSSID.c_str(), cadenaPSK.c_str());
 }
 
 void timerEventos()
@@ -553,10 +555,7 @@ void timerEventos()
 	WiFi.onEvent(WiFiEvent);
 }
 
-void messageReceived(String &topic, String &payload)
-{
-	Serial.println("incoming: " + topic + " - " + payload);
-}
+
 void configuraClientMqtt()
 {
 	net.setCACert(ca_cert); //Estableemos el certificado de la autoridad CA para comprobar que es nuestro servidor
@@ -574,4 +573,84 @@ void configuraClientMqtt()
 	char *auxDatos = new char[mensajeEnvio.length() + 1];
 	strcpy(auxDatos, mensajeEnvio.c_str());
 	client.setWill(aux, auxDatos, true, 2);
+}
+
+void messageReceived(String &topic, String &payload)
+{
+	Serial.println("incoming: " + topic + " - " + payload);
+	
+	String datosHashtag;
+	int hashtag = 0;
+	char *cadena;
+	aux = "";
+	for (int i = 0; i < payload.length(); i++)
+	{
+		if ((char)payload[i] == '#' || hashtag >= 1)
+		{
+			hashtag++;
+			datosHashtag += (char)payload[i];
+		}
+		if (hashtag == 0)
+		{
+			aux += (char)payload[i];
+		}
+	}
+
+	cadena = (char *)aux.c_str();
+	if (strcmp(cadena, (char *)ConstanteElimina.c_str()) == 0)
+	{
+		/* Pedimos un nuevo Id */
+		Serial.println("\r\n Creamos un nuevo Id");
+		/*Tipo de dispositivo del nuevo disp*/
+		mensajeEnvio = "";
+		mensajeEnvio = Nuevo + '#' + String(macEsp) + '#' + tipo + '#' + claveDisp + '#';
+		client.publish(ID_REGISTRA, (char *)mensajeEnvio.c_str(), false, 2 );
+	}
+	else if (strcmp(cadena, (char *)ConstanteConfirmaDispositivos.c_str()) == 0)
+	{
+		Serial.println("\r\n Confirmado ID en Dispositivos");
+	}
+
+	else if (strcmp(cadena, (char *)ConstanteConfirmaCasa.c_str()) == 0)
+	{
+		Serial.println("\r\n Confirmado ID en Casa");
+		/* Formato mensaje recibido payload = "200#casa" --> datosHashtag = "#casa" */
+		String nomCasa;
+		for (int i = 0; i < datosHashtag.length(); i++)
+		{
+			if (datosHashtag[i] != '#')
+			{
+				nomCasa += datosHashtag[i];
+			}
+		}
+		Serial.print("nomCasa: ");
+		Serial.println(nomCasa);
+		// Una vez que ya s� que esta en mi casa, pido que me mande el estado de la alarma
+		mensajeEnvio = "";
+		mensajeEnvio = respAlarma + '#' + nomCasa + '#';
+		client.publish((char *)respAlarma.c_str(), (char *)mensajeEnvio.c_str(), false, 2);
+	}
+	else if (strcmp((char*)topic.c_str(), macEsp) == 0)
+	{
+		Serial.println("\r\n Se recibe ID y se configura el ESP");
+		Serial.println("Se unsubscribe " + esid);
+		client.unsubscribe((char *)esid.c_str()); //Reset ID
+		esid = cadena;
+		Serial.println("Subscrito a: " + esid);
+		client.subscribe((char *)esid.c_str(), 2); //Reset ID
+		Serial.println("writing eeprom ssid:");
+		for (int i = MEM_DIR_ID; i < aux.length() + MEM_DIR_ID; ++i)
+		{
+			EEPROM.writeChar(i, cadena[i]);
+			Serial.print("Wrote: ");
+			Serial.println(cadena[i]);
+		}
+		EEPROM.commit();
+	}
+	else if (strcmp((char*)topic.c_str(), (char *)estadoAlarmaTopic.c_str()) == 0)
+	{
+		Serial.println("\r\nEstado de la alarma: ");
+		Serial.println(aux);
+		estadoAlarma = aux;
+	}
 }
