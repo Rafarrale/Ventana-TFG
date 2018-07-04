@@ -1,6 +1,8 @@
 #include <EEPROM.h>
 #include <WiFiClientSecure.h>
 #include <MQTT.h>
+#include "esp_system.h"
+
 
 extern "C"
 {
@@ -46,6 +48,9 @@ char macEsp[10];
 String estadoAlarmaTopic;
 String mensajeEnvio;
 String aux;
+
+/* Watchdog */
+hw_timer_t *timer = NULL;
 
 
 /* ReedRelay */
@@ -117,6 +122,12 @@ void setup()
 	pinMode(led, OUTPUT);
 	pinMode(mini_reed_swtich_pin, INPUT_PULLUP);
 	pinMode(actmedBateria, OUTPUT);
+
+	/* WatchDog */
+	timer = timerBegin(0, 80, true); //timer 0, div 80
+    timerAttachInterrupt(timer, &resetModule, true);
+    timerAlarmWrite(timer, 90000000, false); //set time in us
+    timerAlarmEnable(timer); //enable interrupt
 
 	/* EEPROM */
 	EEPROM.begin(MEM_TOTAL);
@@ -275,11 +286,18 @@ void setup()
 
 void loop()
 {
+	/* Watchdog */
+	timerWrite(timer, 0); //reset timer (feed watchdog)
+    long tme = millis();
+    Serial.println("running mainloop");
+
 	client.loop();
 	delay(10); // <- fixes some issues with WiFi stability
 
 	if (!client.connected())
 	{
+		//Serial.println("cliente desconectado");
+		//delay(1000000000);
 		connect();
 	}
 
@@ -289,6 +307,10 @@ void loop()
 	readReedRelay();
 	/* Actualizamos la bateria cada 20 minutos*/
 	readBateria();
+
+	Serial.print("loop time is = ");
+    tme = millis() - tme;
+    Serial.println(tme);
 }
 
 void readBateria()
@@ -653,4 +675,9 @@ void messageReceived(String &topic, String &payload)
 		Serial.println(aux);
 		estadoAlarma = aux;
 	}
+}
+
+void IRAM_ATTR resetModule(){
+    ets_printf("reboot\n");
+    esp_restart_noos();
 }
