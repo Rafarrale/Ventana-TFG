@@ -10,6 +10,11 @@ extern "C"
 #include "freertos/timers.h"
 }
 
+/* DeepSleep timer */
+#define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP  60        /* Time ESP32 will go to sleep (in seconds) */
+RTC_DATA_ATTR int estadoAlarmaRTC = 0;
+
 /* ROM */
 #define MEM_ID 24
 #define MEM_DIR_ID 0
@@ -38,7 +43,7 @@ static int memValuesWifi = 25;
 static int cuentaReedRelay = 0;
 static int cuenta = 0;
 static int cuentaBateria = 0;
-static int timeKeepAlive = 10; // Tiempo que debe pasar para cambiar el estado del dispositivo a desconectado
+static int timeKeepAlive = 68; // Tiempo que debe pasar para cambiar el estado del dispositivo a desconectado
 static int timeout = 1000;
 String esid = "";
 String cadenaSSID = "";
@@ -123,11 +128,13 @@ void setup()
 	pinMode(mini_reed_swtich_pin, INPUT_PULLUP);
 	pinMode(actmedBateria, OUTPUT);
 
-	/* WatchDog */
-	timer = timerBegin(0, 80, true); //timer 0, div 80
-    timerAttachInterrupt(timer, &resetModule, true);
-    timerAlarmWrite(timer, 90000000, false); //set time in us
-    timerAlarmEnable(timer); //enable interrupt
+	// TODO: Pruebas medicion tiempo DeepSleep reconexion
+	esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+	esp_sleep_enable_ext0_wakeup(GPIO_NUM_33,1); //1 = High, 0 = Low
+    Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) +
+    " Seconds");
+	long tme = millis();
+	/***/
 
 	/* EEPROM */
 	EEPROM.begin(MEM_TOTAL);
@@ -197,16 +204,21 @@ void setup()
 
 		Serial.println("");
 		Serial.println("SmartConfig received.");
+		watchDogInit();
 	}
 	else
 	{
 		Serial.println("Connecting to Wi-Fi...");
 		WiFi.begin(cadenaSSID.c_str(), cadenaPSK.c_str());
+		watchDogInit();
 	}
-
+	
 	timerEventos();
 	configuraClientMqtt();
 	connect();
+	// TODO: Abrir una conexion de mqtt sin encriptar por rapidez para mandar la alarma por el puerto 8080 
+	Serial.print("estadoAlarmaRTC: ");
+	Serial.println(String(estadoAlarmaRTC));
 
 	if (validaSSID == memValuesWifi && validaPsk == memValuesWifi)
 	{
@@ -282,14 +294,20 @@ void setup()
 		client.publish(ID_REGISTRA, (char *)mensajeEnvio.c_str(), false, 2);
 	}
 	/**/
+
+	// TODO: Quitar, pruebas medicion setup
+	Serial.print("loop time is = ");
+    tme = millis() - tme;
+    Serial.println(tme);
+	/***/
 }
 
 void loop()
 {
 	/* Watchdog */
 	timerWrite(timer, 0); //reset timer (feed watchdog)
-    long tme = millis();
-    Serial.println("running mainloop");
+    //long tme = millis();
+    //Serial.println("running mainloop");
 
 	client.loop();
 	delay(10); // <- fixes some issues with WiFi stability
@@ -308,9 +326,9 @@ void loop()
 	/* Actualizamos la bateria cada 20 minutos*/
 	readBateria();
 
-	Serial.print("loop time is = ");
-    tme = millis() - tme;
-    Serial.println(tme);
+	//Serial.print("loop time is = ");
+    //tme = millis() - tme;
+    //Serial.println(tme);
 }
 
 void readBateria()
@@ -674,10 +692,23 @@ void messageReceived(String &topic, String &payload)
 		Serial.println("\r\nEstado de la alarma: ");
 		Serial.println(aux);
 		estadoAlarma = aux;
+		
+		/* Entramos en modo deep-sleep */
+		
+		Serial.println("Going to sleep now");
+    	esp_deep_sleep_start();
 	}
 }
 
 void IRAM_ATTR resetModule(){
     ets_printf("reboot\n");
     esp_restart_noos();
+}
+
+void watchDogInit(){
+	/* WatchDog */
+	timer = timerBegin(0, 80, true); //timer 0, div 80
+    timerAttachInterrupt(timer, &resetModule, true);
+    timerAlarmWrite(timer, 90000000, false); //set time in us
+    timerAlarmEnable(timer); //enable interrupt
 }
