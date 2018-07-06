@@ -3,7 +3,6 @@
 #include <MQTT.h>
 #include "esp_system.h"
 
-
 extern "C"
 {
 #include "freertos/FreeRTOS.h"
@@ -22,70 +21,55 @@ extern "C"
 //const GPIO
 static const int buttonPin = 19;
 static const int led = 5;
-static const int mini_reed_swtich_pin = 13;
-static const int actmedBateria = 32;
-static const int analogMedBateria = 36;
+static const int interruptor = 13;
 
 //var
 static bool pasa = true;
-static bool pasaAlarma = true;
-static bool cerradoAlarma = true;
-static bool activaAlarma = false;
+static bool activaInterruptor = false;
 static int buttonState = 0;
 static int resetWiFi = 20;
 static int store_value = 0;
 static int memValuesWifi = 25;
-static int cuentaReedRelay = 0;
 static int cuenta = 0;
-static int cuentaBateria = 0;
 static int timeKeepAlive = 10; // Tiempo que debe pasar para cambiar el estado del dispositivo a desconectado
 static int timeout = 1000;
 String esid = "";
 String cadenaSSID = "";
 String cadenaPSK = "";
-String estadoAlarma;
+String estadoInterruptor;
 char macEsp[10];
-String estadoAlarmaTopic;
+String estadoInterruptorTopic;
 String mensajeEnvio;
 String aux;
 
 /* Watchdog */
 hw_timer_t *timer = NULL;
 
-
-/* ReedRelay */
-static const char *activar = "I";
-static const char *cerrado = "cerrado";
-
 /*MQTT*/
 TimerHandle_t wifiReconnectTimer;
 
 /* topics */
 #define ID_REGISTRA "idRegistra"
-#define ALARMA "alarma"
 
 /* Constantes */
+static const String tipo = "interruptor";	/* Cambiar aqui el tipo de dispositivo para su registro  */
+static const String claveDisp = "159753456"; /* Cambiar aqui la clave del dispositivo */
 static char msgId[MEM_ID];
 static const String ConstanteElimina = "elimina";
 static const String Nuevo = "nuevo";
-static const String Bateria = "bateria";
-static const String armar = "armar";
-static const String desarmar = "desarmar";
-static const String alarma = "alarma";
-static const String casa = "casa";
-static const String respAlarma = "respAlarma";
+static const String activar = "activar";
+static const String desactivar = "desactivar";
+static const String respInterruptor = "respInterruptor";
 static const String estado = "estado";
-static const String conf_alarma = "confAlarma";
+static const String conf_interruptor = "confInterruptor";
 static const char *constDesconectado = "desconectado";
 static const char *constConectado = "conectado";
 static const String constIdRegistra = "idRegistra";
-static const String tipo = "contacto";		 /* Cambiar aqui el tipo de dispositivo para su registro  */
-static const String claveDisp = "159753456"; /* Cambiar aqui la clave del dispositivo */
 static const String ConstanteConfirmaCasa = "200";
 static const String ConstanteConfirmaDispositivos = "201";
 static const String validaSsidPsk = "*";
-static const String encripta = "encripta";
-static const int actBat = 1200000; /* Cambiar aqui el tiempo de actualizacion de la bateria*/
+static const char* constTrue = "true";
+static const char* constFalse = "false";
 
 WiFiClientSecure net;
 MQTTClient client;
@@ -120,14 +104,13 @@ void setup()
 	/* PIN MODES*/
 	pinMode(buttonPin, INPUT_PULLDOWN);
 	pinMode(led, OUTPUT);
-	pinMode(mini_reed_swtich_pin, INPUT_PULLUP);
-	pinMode(actmedBateria, OUTPUT);
+	pinMode(interruptor, OUTPUT);
 
 	/* WatchDog */
 	timer = timerBegin(0, 80, true); //timer 0, div 80
-    timerAttachInterrupt(timer, &resetModule, true);
-    timerAlarmWrite(timer, 90000000, false); //set time in us
-    timerAlarmEnable(timer); //enable interrupt
+	timerAttachInterrupt(timer, &resetModule, true);
+	timerAlarmWrite(timer, 40000000, false); //set time in us
+	timerAlarmEnable(timer);				 //enable interrupt
 
 	/* EEPROM */
 	EEPROM.begin(MEM_TOTAL);
@@ -268,6 +251,7 @@ void setup()
 		//**Mensaje ==> idRegistra#esid#*macEsp#/
 		mensajeEnvio = "";
 		mensajeEnvio = constIdRegistra + '#' + esid + '#' + macEsp + '#';
+		Serial.println("Publish: " + mensajeEnvio);
 		client.publish(ID_REGISTRA, (char *)mensajeEnvio.c_str(), false, 2);
 		//Serial.println("Se crea el topic" + esid);
 		Serial.println("Subscrito a: " + esid);
@@ -279,6 +263,7 @@ void setup()
 		Serial.println("Mandando peticion nuevo Id: ");
 		mensajeEnvio = "";
 		mensajeEnvio = Nuevo + '#' + String(macEsp) + '#' + tipo + '#' + claveDisp + '#';
+		Serial.println("Publish: " + mensajeEnvio);
 		client.publish(ID_REGISTRA, (char *)mensajeEnvio.c_str(), false, 2);
 	}
 	/**/
@@ -288,8 +273,8 @@ void loop()
 {
 	/* Watchdog */
 	timerWrite(timer, 0); //reset timer (feed watchdog)
-    long tme = millis();
-    Serial.println("running mainloop");
+						  //long tme = millis();
+						  //Serial.println("running mainloop");
 
 	client.loop();
 	delay(10); // <- fixes some issues with WiFi stability
@@ -303,132 +288,13 @@ void loop()
 
 	/* Reset SSID y PassWord WiFi */
 	pulsacionLarga();
-	/* Alarma Contacto */
-	readReedRelay();
-	/* Actualizamos la bateria cada 20 minutos*/
-	readBateria();
 
-	Serial.print("loop time is = ");
-    tme = millis() - tme;
-    Serial.println(tme);
-}
+	/* Activa y desactiva pin interruptor*/
+	confDisp();
 
-void readBateria()
-{
-	int ahora = millis();
-	if (ahora >= cuentaBateria + actBat)
-	{
-		cuentaBateria = ahora;
-		int aux = parseoBateria();
-		mensajeEnvio = "";
-		mensajeEnvio = Bateria + '#' + esid + '#' + String(aux) + '#';
-		client.publish((char *)Bateria.c_str(), (char *)mensajeEnvio.c_str(), false, 2);
-	}
-}
-
-int parseoBateria()
-{
-	/*
-	1 = Activamos el transistor BJT (Pin 17) para que se normalice la tension de entrada al pin analogico
-	2 = Podemos hacer la lectura del valor desde el pin analogico (2)
-	3 = Dejamos de leer el pin
-	4 = Desactivamos el transistor BJT para que deje de consumir corriente el divisor de tension
-	*/
-
-	digitalWrite(actmedBateria, HIGH);
-	double aux = 0.0;
-	double valor = 4095.0;
-	for (int i = 0; i < 10; i++)
-	{
-		aux = ReadVoltage(analogMedBateria);
-		if (aux < valor)
-		{
-			valor = aux;
-		}
-	}
-	digitalWrite(actmedBateria, LOW);
-
-	int res = 0;
-	// Hasta 3.8V
-	if (valor <= 4095.0 && valor >= 1.75)
-	{
-		Serial.println(valor);
-		res = 30;
-	}
-	// Hasta 3.45V
-	else if (valor <= 1.75 && valor >= 1.61)
-	{
-		Serial.println(valor);
-		res = 10;
-	}
-	// Hasta 3.3V
-	else if (valor <= 1.61 && valor >= 0.5)
-	{
-		Serial.println(valor);
-		res = 5;
-	}
-	else
-	{
-		Serial.println(valor);
-		res = 0;
-	}
-	return res;
-}
-
-double ReadVoltage(byte pin)
-{
-	double reading = analogRead(pin); // Reference voltage is 3v3 so maximum reading is 3v3 = 4095 in range 0 to 4095
-	if (reading < 1 || reading > 4095)
-		return 0;
-	return -0.000000000000016 * pow(reading, 4) + 0.000000000118171 * pow(reading, 3) - 0.000000301211691 * pow(reading, 2) + 0.001109019271794 * reading + 0.034143524634089;
-}
-
-void readReedRelay()
-{
-	int ahora = millis();
-	if (ahora > cuentaReedRelay + 500 && validaestadoAlarma())
-	{
-		cuentaReedRelay = ahora;
-		store_value = digitalRead(mini_reed_swtich_pin);
-		if (store_value)
-		{
-			if (pasaAlarma)
-			{
-				mensajeEnvio = "";
-				mensajeEnvio = alarma + '#' + esid + '#' + activar + '#';
-				Serial.println("Publish: " + mensajeEnvio);
-				client.publish(ALARMA, (char *)mensajeEnvio.c_str(), false, 2);
-				pasaAlarma = false;
-				cerradoAlarma = true;
-			}
-		}
-		if (!store_value)
-		{
-			if (cerradoAlarma)
-			{
-				pasaAlarma = true;
-				mensajeEnvio = "";
-				mensajeEnvio = alarma + '#' + esid + '#' + cerrado + '#';
-				Serial.println("Publish: " + mensajeEnvio);
-				client.publish(ALARMA, (char *)mensajeEnvio.c_str(), false, 2);
-				cerradoAlarma = false;
-			}
-		}
-	}
-}
-
-boolean validaestadoAlarma()
-{
-
-	if (estadoAlarma == armar || estadoAlarma == casa)
-	{
-		activaAlarma = true;
-	}
-	else if (estadoAlarma == desarmar)
-	{
-		activaAlarma = false;
-	}
-	return activaAlarma;
+	//Serial.print("loop time is = ");
+	//tme = millis() - tme;
+	//Serial.println(tme);
 }
 
 void pulsacionLarga()
@@ -532,14 +398,15 @@ void connect()
 
 	client.subscribe(macEsp, 2);
 	Serial.println("Subscrito a: " + String(macEsp));
-	estadoAlarmaTopic = conf_alarma + '/' + macEsp;
-	client.subscribe((char *)estadoAlarmaTopic.c_str(), 2);
-	Serial.println("Subscrito a: " + String(estadoAlarmaTopic));
+	estadoInterruptorTopic = conf_interruptor + '/' + macEsp;
+	client.subscribe((char *)estadoInterruptorTopic.c_str(), 2);
+	Serial.println("Subscrito a: " + String(estadoInterruptorTopic));
 
 	/** Mensaje estado de la conexion*/
 	mensajeEnvio = "";
 	String auxEstadoTopic = estado + '/' + macEsp;
 	mensajeEnvio = estado + '#' + macEsp + '#' + constConectado + '#';
+	Serial.println("Publish: " + mensajeEnvio);
 	client.publish((char *)auxEstadoTopic.c_str(), (char *)mensajeEnvio.c_str(), true, 2);
 }
 
@@ -577,7 +444,6 @@ void timerEventos()
 	WiFi.onEvent(WiFiEvent);
 }
 
-
 void configuraClientMqtt()
 {
 	net.setCACert(ca_cert); //Estableemos el certificado de la autoridad CA para comprobar que es nuestro servidor
@@ -600,7 +466,7 @@ void configuraClientMqtt()
 void messageReceived(String &topic, String &payload)
 {
 	Serial.println("incoming: " + topic + " - " + payload);
-	
+
 	String datosHashtag;
 	int hashtag = 0;
 	char *cadena;
@@ -626,7 +492,8 @@ void messageReceived(String &topic, String &payload)
 		/*Tipo de dispositivo del nuevo disp*/
 		mensajeEnvio = "";
 		mensajeEnvio = Nuevo + '#' + String(macEsp) + '#' + tipo + '#' + claveDisp + '#';
-		client.publish(ID_REGISTRA, (char *)mensajeEnvio.c_str(), false, 2 );
+		Serial.println("Publish: " + mensajeEnvio);
+		client.publish(ID_REGISTRA, (char *)mensajeEnvio.c_str(), false, 2);
 	}
 	else if (strcmp(cadena, (char *)ConstanteConfirmaDispositivos.c_str()) == 0)
 	{
@@ -647,12 +514,13 @@ void messageReceived(String &topic, String &payload)
 		}
 		Serial.print("nomCasa: ");
 		Serial.println(nomCasa);
-		// Una vez que ya s� que esta en mi casa, pido que me mande el estado de la alarma
+		// Una vez que ya s� que esta en mi casa, pido que me mande el estado del interruptor
 		mensajeEnvio = "";
-		mensajeEnvio = respAlarma + '#' + nomCasa + '#';
-		client.publish((char *)respAlarma.c_str(), (char *)mensajeEnvio.c_str(), false, 2);
+		mensajeEnvio = respInterruptor + '#' + nomCasa + '#' + esid + '#';
+		Serial.println("Publish: " + mensajeEnvio);
+		client.publish((char *)respInterruptor.c_str(), (char *)mensajeEnvio.c_str(), false, 2);
 	}
-	else if (strcmp((char*)topic.c_str(), macEsp) == 0)
+	else if (strcmp((char *)topic.c_str(), macEsp) == 0)
 	{
 		Serial.println("\r\n Se recibe ID y se configura el ESP");
 		Serial.println("Se unsubscribe " + esid);
@@ -669,15 +537,35 @@ void messageReceived(String &topic, String &payload)
 		}
 		EEPROM.commit();
 	}
-	else if (strcmp((char*)topic.c_str(), (char *)estadoAlarmaTopic.c_str()) == 0)
+	else if (strcmp((char *)topic.c_str(), (char *)estadoInterruptorTopic.c_str()) == 0)
 	{
-		Serial.println("\r\nEstado de la alarma: ");
+		Serial.println("\r\nEstado del interruptor: ");
 		Serial.println(aux);
-		estadoAlarma = aux;
+		estadoInterruptor = aux;
 	}
 }
 
-void IRAM_ATTR resetModule(){
-    ets_printf("reboot\n");
-    esp_restart_noos();
+void IRAM_ATTR resetModule()
+{
+	ets_printf("reboot\n");
+	esp_restart_noos();
+}
+
+void confDisp()
+{
+	validaestadoInterruptor();
+	digitalWrite(interruptor, activaInterruptor);
+}
+
+boolean validaestadoInterruptor()
+{
+
+	if (strcmp((char*)estadoInterruptor.c_str(), constTrue) == 0)
+	{
+		activaInterruptor = true;
+	}
+	else if (strcmp((char*)estadoInterruptor.c_str(), constFalse) == 0)
+	{
+		activaInterruptor = false;
+	}
 }
