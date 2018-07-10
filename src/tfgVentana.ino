@@ -51,6 +51,7 @@ String estadoAlarmaTopic;
 long tme;
 long tmeSleep;
 static long tmeSleepDiferencia = 2000;
+static bool watchMqtt = true;  // Variable usada para prevenir bloqueos con conexion mqtt
 
 /* Watchdog */
 hw_timer_t *timer = NULL;
@@ -184,8 +185,8 @@ void setup()
 	}
 	else
 	{
-		connectToWifi();
 		watchDogInit();
+		connectToWifi();
 	}
 
 	timerEventos();
@@ -332,8 +333,10 @@ void loop()
 		}
 	}
 
-	/* Watchdog, evitamos que se vaya a dormir porque esta activo */
-	timerWrite(timer, 0); //reset timer (feed watchdog)
+	if(watchMqtt){
+		/* Watchdog, evitamos que se vaya a dormir porque esta activo */
+		timerWrite(timer, 0); //reset timer (feed watchdog)
+	}
 }
 void readBateria()
 {
@@ -532,7 +535,6 @@ void connectToMqtt()
 	mqttClient.setClientId(macEsp);
 	mqttClient.setCleanSession(false);
 	mqttClient.setKeepAlive(timeKeepAlive);
-	mqttClient.setCredentials("usuario1", "BeNq_42?");
 	/** Mensaje de aviso si se pierde la conexion*/
 	// TOPIC
 	String topicEstadoDisp = estado + '/' + macEsp;
@@ -559,6 +561,7 @@ void WiFiEvent(WiFiEvent_t event)
 		break;
 	case SYSTEM_EVENT_STA_DISCONNECTED:
 		Serial.println("WiFi lost connection");
+		watchMqtt = false;
 		xTimerStop(mqttReconnectTimer, 0); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
 		xTimerStart(wifiReconnectTimer, 0);
 		break;
@@ -572,6 +575,7 @@ void WiFiEvent(WiFiEvent_t event)
 void onMqttConnect(bool sessionPresent)
 {
 	Serial.println("Connected to MQTT.");
+	watchMqtt = true;
 	Serial.print("Session present: ");
 	Serial.println(sessionPresent);
 
@@ -677,7 +681,6 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
 {
 	Serial.println("Disconnected from MQTT.");
-
 	if (WiFi.isConnected())
 	{
 		xTimerStart(mqttReconnectTimer, 0);
