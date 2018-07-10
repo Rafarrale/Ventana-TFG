@@ -30,6 +30,8 @@ static int buttonState = 0;
 static int resetWiFi = 20;
 static int store_value = 0;
 static int memValuesWifi = 25;
+static char ip[] = "192.168.2.20";
+static int port = 1883;
 static int cuenta = 0;
 static int timeKeepAlive = 10; // Tiempo que debe pasar para cambiar el estado del dispositivo a desconectado
 static int timeout = 1000;
@@ -71,32 +73,8 @@ static const String validaSsidPsk = "*";
 static const char* constTrue = "true";
 static const char* constFalse = "false";
 
-WiFiClientSecure net;
+WiFiClient net;
 MQTTClient client;
-
-const char *ca_cert = \ 
-"-----BEGIN CERTIFICATE-----\n"
-					  "MIIDqjCCApKgAwIBAgIJAI/DEk3GiiIYMA0GCSqGSIb3DQEBDQUAMGoxFzAVBgNV\n"
-					  "BAMMDkFuIE1RVFQgYnJva2VyMRYwFAYDVQQKDA1Pd25UcmFja3Mub3JnMRQwEgYD\n"
-					  "VQQLDAtnZW5lcmF0ZS1DQTEhMB8GCSqGSIb3DQEJARYSbm9ib2R5QGV4YW1wbGUu\n"
-					  "bmV0MB4XDTE4MDcwMjEwMjMxN1oXDTMyMDYyODEwMjMxN1owajEXMBUGA1UEAwwO\n"
-					  "QW4gTVFUVCBicm9rZXIxFjAUBgNVBAoMDU93blRyYWNrcy5vcmcxFDASBgNVBAsM\n"
-					  "C2dlbmVyYXRlLUNBMSEwHwYJKoZIhvcNAQkBFhJub2JvZHlAZXhhbXBsZS5uZXQw\n"
-					  "ggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC/q4jgXF6UnrAGKUl07XL2\n"
-					  "wg4PXNPbsH9B2poxqT4sRB4lLt3mlK4yDEATq2j9H5+PajY/cGoBl4UZJI6aUExP\n"
-					  "J+0gAwW4EM/OOUTPxOHe2Yf+ky6PIIOLTRMYss5mgASYt+CBr2Q4b68aHWKbQv8d\n"
-					  "F+zRnhiSGyceP1v3g32uHMWzwDl+geRTrIXwYkWXc/94gkMgookTcN+h+KWr0UnR\n"
-					  "VQEKJoj6DY3s5Z2xn9IQ7Lj2GGqaPpDZqS+6yYRJnAqDdiw+xK8yO8j0xFk5KIWC\n"
-					  "yzk98ixZRrT3GRCt4JvX6/+V/rAQcI6DW81dPtn5OiywaQvW3TLUdAF+ec1DhMqV\n"
-					  "AgMBAAGjUzBRMB0GA1UdDgQWBBSWQUyfpwP5edxmeBPCGURv+eIAODAfBgNVHSME\n"
-					  "GDAWgBSWQUyfpwP5edxmeBPCGURv+eIAODAPBgNVHRMBAf8EBTADAQH/MA0GCSqG\n"
-					  "SIb3DQEBDQUAA4IBAQADyoim7d1qKEOGJipSBiXWgVuLKpcAfLeOQYf+ldY+A2po\n"
-					  "QalrGBHkrk2vqa+dpHUdRQ4Zl7SbBdVX9lOXEDXE0DQ+KPiRGGfgLm9kTvZHuG8v\n"
-					  "a4FImR8QRNoi/Y5fwVhp7KlfMCw1nZRhXYq990pL/ENarJKTw0ufaT3kc1/PHmaE\n"
-					  "x27rADY/LfcvaBSn+F38pReRvASYY3ppNsS7HT3Xtygv3Pu4s0Htz4Ua9zoBXkIB\n"
-					  "VWmfenTh+osdZVLEJj/PW5a/xiQ0GjCw3i9el6vVfxnxUDIIjrYqUuYC9YzRuNK8\n"
-					  "oQ3axUnAzZfEbyv4i866hHPjlb1NwlO8c17R8/Hv\n"
-					  "-----END CERTIFICATE-----\n";
 
 void setup()
 {
@@ -387,7 +365,7 @@ void connect()
 	}
 
 	Serial.print("\nconnecting to MQTT...");
-	while (!client.connect(macEsp, "usuario1", "BeNq_42?")) //TODO: usuario en constantes y meter el connect en while
+	while (!client.connect(macEsp)) //TODO: usuario en constantes y meter el connect en while
 	{
 
 		Serial.print(".");
@@ -446,8 +424,7 @@ void timerEventos()
 
 void configuraClientMqtt()
 {
-	net.setCACert(ca_cert); //Estableemos el certificado de la autoridad CA para comprobar que es nuestro servidor
-	client.begin("192.168.2.20", 8883, net);
+	client.begin(ip, port, net);
 	client.onMessage(messageReceived);
 	client.setOptions(timeKeepAlive, false, timeout); //Se mantiene la sesion
 	/** Mensaje de aviso si se pierde la conexion*/
@@ -547,7 +524,7 @@ void messageReceived(String &topic, String &payload)
 
 void IRAM_ATTR resetModule()
 {
-	ets_printf("reboot\n");
+	ets_printf("WatchDog trigger\n");
 	esp_restart_noos();
 }
 
