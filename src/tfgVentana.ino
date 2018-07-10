@@ -40,7 +40,8 @@ static int memValuesWifi = 25;
 static int cuentaReedRelay = 0;
 static int cuenta = 0;
 static int cuentaBateria = 0;
-static int timeKeepAlive = 70; // Tiempo que debe pasar para cambiar el estado del dispositivo a desconectado
+static int timeKeepAlive = 70;	 // Tiempo que debe pasar para cambiar el estado del dispositivo a desconectado
+static int tmeWatchDog = 30000000; //set time in us WATCHDOG
 String esid = "";
 String cadenaSSID = "";
 String cadenaPSK = "";
@@ -50,6 +51,9 @@ String estadoAlarmaTopic;
 long tme;
 long tmeSleep;
 static long tmeSleepDiferencia = 2000;
+
+/* Watchdog */
+hw_timer_t *timer = NULL;
 
 /* ReedRelay */
 static const char *activar = "I";
@@ -176,10 +180,12 @@ void setup()
 
 		Serial.println("");
 		Serial.println("SmartConfig received.");
+		watchDogInit();
 	}
 	else
 	{
 		connectToWifi();
+		watchDogInit();
 	}
 
 	timerEventos();
@@ -254,7 +260,8 @@ void setup()
 			digComp = digComp + 1;
 		}
 	}
-	if (activaAlarma)
+	store_value = digitalRead(mini_reed_swtich_pin);
+	if (activaAlarma || store_value)
 	{
 		String mensajeEnvio = "";
 		mensajeEnvio = alarma + '#' + esid + '#' + activar + '#';
@@ -324,6 +331,9 @@ void loop()
 			esp_deep_sleep_start();
 		}
 	}
+
+	/* Watchdog, evitamos que se vaya a dormir porque esta activo */
+	timerWrite(timer, 0); //reset timer (feed watchdog)
 }
 void readBateria()
 {
@@ -743,4 +753,19 @@ void print_wakeup_reason()
 		Serial.println("Wakeup was not caused by deep sleep");
 		break;
 	}
+}
+
+void watchDogInit()
+{
+	/* WatchDog */
+	timer = timerBegin(0, 80, true); //timer 0, div 80
+	timerAttachInterrupt(timer, &resetModule, true);
+	timerAlarmWrite(timer, tmeWatchDog, false);
+	timerAlarmEnable(timer); //enable interrupt
+}
+
+void IRAM_ATTR resetModule()
+{
+	ets_printf("Reiniciando watchdog expired\n");
+	esp_restart_noos();
 }
