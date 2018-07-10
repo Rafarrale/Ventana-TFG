@@ -26,13 +26,13 @@ static const int analogMedBateria = 36;
 /* DeepSleep timer */
 #define uS_TO_S_FACTOR 1000000 /* Conversion factor for micro seconds to seconds */
 #define TIME_TO_SLEEP 60	   /* Time ESP32 will go to sleep (in seconds) */
-RTC_DATA_ATTR int estadoAlarmaRTC = 0;
 
 //var
 static bool pasa = true;
 static bool pasaAlarma = true;
 static bool cerradoAlarma = true;
 static bool activaAlarma = false;
+static bool reciveAlarm = false;
 static int buttonState = 0;
 static int resetWiFi = 20;
 static int store_value = 0;
@@ -40,7 +40,7 @@ static int memValuesWifi = 25;
 static int cuentaReedRelay = 0;
 static int cuenta = 0;
 static int cuentaBateria = 0;
-static int timeKeepAlive = 5; // Tiempo que debe pasar para cambiar el estado del dispositivo a desconectado
+static int timeKeepAlive = 70; // Tiempo que debe pasar para cambiar el estado del dispositivo a desconectado
 String esid = "";
 String cadenaSSID = "";
 String cadenaPSK = "";
@@ -49,7 +49,7 @@ char macEsp[10];
 String estadoAlarmaTopic;
 long tme;
 long tmeSleep;
-
+static long tmeSleepDiferencia = 2000;
 
 /* ReedRelay */
 static const char *activar = "I";
@@ -104,6 +104,7 @@ void setup()
 	Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) +
 				   " Seconds");
 	tme = millis();
+	print_wakeup_reason();
 	/***/
 
 	/* EEPROM */
@@ -253,6 +254,15 @@ void setup()
 			digComp = digComp + 1;
 		}
 	}
+	if (activaAlarma)
+	{
+		String mensajeEnvio = "";
+		mensajeEnvio = alarma + '#' + esid + '#' + activar + '#';
+		Serial.println("Publish: " + mensajeEnvio);
+		mqttClient.publish(ALARMA, 1, false, (char *)mensajeEnvio.c_str());
+		pasaAlarma = false;
+		cerradoAlarma = true;
+	}
 
 	/* Si el valor leido de memoria en el inicio es valido, se comprueba si existe en la casa
 	en caso de que exista se recibe confirmacion, sino, se elimina de la BBDD*/
@@ -261,10 +271,11 @@ void setup()
 		/* publish the message */
 		//**Mensaje ==> idRegistra#esid#*macEsp#/
 		String auxIdRegistra = constIdRegistra + '#' + esid + '#' + macEsp + '#';
-		mqttClient.publish(ID_REGISTRA, 2, false, (char *)auxIdRegistra.c_str());
+		Serial.println("Publish: " + auxIdRegistra);
+		mqttClient.publish(ID_REGISTRA, 1, false, (char *)auxIdRegistra.c_str());
 		//Serial.println("Se crea el topic" + esid);
 		Serial.println("Subscrito a: " + esid);
-		mqttClient.subscribe((char *)esid.c_str(), 2); //Reset ID
+		mqttClient.subscribe((char *)esid.c_str(), 1); //Reset ID
 	}
 	else
 	{
@@ -272,16 +283,16 @@ void setup()
 		Serial.println("Mandando peticion nuevo Id: ");
 		String aux = Nuevo + '#' + String(macEsp) + '#' + tipo + '#' + claveDisp + '#';
 		Serial.print(aux);
-		Serial.print(ID_REGISTRA);
-		mqttClient.publish(ID_REGISTRA, 2, false, (char *)aux.c_str());
+		Serial.println("Publish: " + aux);
+		mqttClient.publish(ID_REGISTRA, 1, false, (char *)aux.c_str());
 	}
 	/**/
 
 	Serial.print("setup time is = ");
 	tme = millis() - tme;
 	Serial.println(tme);
-	
-	// Inicio de tiempo para intervalo sin datos en recepcion para sleep	
+
+	// Inicio de tiempo para intervalo sin datos en recepcion para sleep
 	tmeSleep = millis();
 }
 
@@ -295,10 +306,23 @@ void loop()
 	readBateria();
 
 	long tmePasa = millis() - tmeSleep;
-	if(tmePasa > 10000){
-		/* Entramos en modo deep-sleep */
-		Serial.println("Going to sleep now usually");
-		esp_deep_sleep_start();
+	if (tmePasa > tmeSleepDiferencia && reciveAlarm)
+	{
+		if (!store_value && !activaAlarma || !activaAlarma)
+		{															// si es falso es que se activo la alarma al despertarse
+			esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_EXT0); //1 = High, 0 = Low
+			/* Entramos en modo deep-sleep */
+			Serial.println("Going to sleep now desactivado");
+			WiFi.mode(WIFI_OFF);
+			esp_deep_sleep_start();
+		}
+		else
+		{
+			/* Entramos en modo deep-sleep */
+			Serial.println("Going to sleep now usually");
+			WiFi.mode(WIFI_OFF);
+			esp_deep_sleep_start();
+		}
 	}
 }
 void readBateria()
@@ -309,8 +333,8 @@ void readBateria()
 		cuentaBateria = ahora;
 		int aux = parseoBateria();
 		String auxRes = Bateria + '#' + esid + '#' + String(aux) + '#';
-		Serial.println(auxRes);
-		mqttClient.publish((char *)Bateria.c_str(), 2, false, (char *)auxRes.c_str());
+		Serial.println("Publish: " + auxRes);
+		mqttClient.publish((char *)Bateria.c_str(), 1, false, (char *)auxRes.c_str());
 	}
 }
 
@@ -383,7 +407,8 @@ void readReedRelay()
 			if (pasaAlarma)
 			{
 				String aux = alarma + '#' + esid + '#' + activar + '#';
-				mqttClient.publish(ALARMA, 2, false, (char *)aux.c_str());
+				Serial.println("Publish: " + aux);
+				mqttClient.publish(ALARMA, 1, false, (char *)aux.c_str());
 
 				pasaAlarma = false;
 				cerradoAlarma = true;
@@ -395,7 +420,8 @@ void readReedRelay()
 			{
 				pasaAlarma = true;
 				String aux = alarma + '#' + esid + '#' + cerrado + '#';
-				mqttClient.publish(ALARMA, 2, false, (char *)aux.c_str());
+				Serial.println("Publish: " + aux);
+				mqttClient.publish(ALARMA, 1, false, (char *)aux.c_str());
 				cerradoAlarma = false;
 			}
 		}
@@ -427,7 +453,7 @@ void pulsacionLarga()
 			cuenta = ahora;
 			pasa = false;
 		}
-		if (ahora > cuenta + 5000 && digitalRead(led) == HIGH)
+		if (ahora > cuenta + 2000 && digitalRead(led) == HIGH)
 		{
 			resetWiFiSsid();
 			parpadeaLedBloqueante(250, led);
@@ -539,42 +565,17 @@ void onMqttConnect(bool sessionPresent)
 	Serial.print("Session present: ");
 	Serial.println(sessionPresent);
 
-	mqttClient.subscribe(macEsp, 2);
+	mqttClient.subscribe(macEsp, 1);
 	Serial.println("Subscrito a: " + String(macEsp));
 	estadoAlarmaTopic = conf_alarma + '/' + macEsp;
-	mqttClient.subscribe((char *)estadoAlarmaTopic.c_str(), 2);
+	mqttClient.subscribe((char *)estadoAlarmaTopic.c_str(), 1);
 	Serial.println("Subscrito a: " + String(estadoAlarmaTopic));
 
 	/** Mensaje estado de la conexion*/
 	String auxEstadoTopic = estado + '/' + macEsp;
 	String auxDatosEstado = estado + '#' + macEsp + '#' + constConectado + '#';
-	mqttClient.publish((char *)auxEstadoTopic.c_str(), 2, true, (char *)auxDatosEstado.c_str());
-}
-
-void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
-{
-	Serial.println("Disconnected from MQTT.");
-
-	if (WiFi.isConnected())
-	{
-		xTimerStart(mqttReconnectTimer, 0);
-	}
-}
-
-void onMqttSubscribe(uint16_t packetId, uint8_t qos)
-{
-	Serial.println("Subscribe acknowledged.");
-	Serial.print("  packetId: ");
-	Serial.println(packetId);
-	Serial.print("  qos: ");
-	Serial.println(qos);
-}
-
-void onMqttUnsubscribe(uint16_t packetId)
-{
-	Serial.println("Unsubscribe acknowledged.");
-	Serial.print("  packetId: ");
-	Serial.println(packetId);
+	Serial.println("Publish: " + auxDatosEstado);
+	mqttClient.publish((char *)auxEstadoTopic.c_str(), 1, true, (char *)auxDatosEstado.c_str());
 }
 
 void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties properties, size_t length, size_t index, size_t total)
@@ -609,7 +610,8 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
 		Serial.println("\r\n Creamos un nuevo Id");
 		/*Tipo de dispositivo del nuevo disp*/
 		String aux = Nuevo + '#' + String(macEsp) + '#' + tipo + '#' + claveDisp + '#';
-		mqttClient.publish(ID_REGISTRA, 2, false, (char *)aux.c_str());
+		Serial.println("Publish: " + aux);
+		mqttClient.publish(ID_REGISTRA, 1, false, (char *)aux.c_str());
 	}
 	else if (strcmp(cadena, (char *)ConstanteConfirmaDispositivos.c_str()) == 0)
 	{
@@ -632,7 +634,8 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
 		Serial.println(nomCasa);
 		// Una vez que ya s� que esta en mi casa, pido que me mande el estado de la alarma
 		String reqAlarma = respAlarma + '#' + nomCasa + '#';
-		mqttClient.publish((char *)respAlarma.c_str(), 2, false, (char *)reqAlarma.c_str());
+		Serial.println("Publish: " + reqAlarma);
+		mqttClient.publish((char *)respAlarma.c_str(), 1, false, (char *)reqAlarma.c_str());
 	}
 	else if (strcmp(topic, macEsp) == 0)
 	{
@@ -641,7 +644,7 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
 		mqttClient.unsubscribe((char *)esid.c_str()); //Reset ID
 		esid = cadena;
 		Serial.println("Subscrito a: " + esid);
-		mqttClient.subscribe((char *)esid.c_str(), 2); //Reset ID
+		mqttClient.subscribe((char *)esid.c_str(), 1); //Reset ID
 		Serial.println("writing eeprom ssid:");
 		for (int i = MEM_DIR_ID; i < aux.length() + MEM_DIR_ID; ++i)
 		{
@@ -656,7 +659,37 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
 		Serial.println("\r\nEstado de la alarma: ");
 		Serial.println(aux);
 		estadoAlarma = aux;
+		reciveAlarm = true;
+		tmeSleep = millis();
 	}
+}
+
+void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
+{
+	Serial.println("Disconnected from MQTT.");
+
+	if (WiFi.isConnected())
+	{
+		xTimerStart(mqttReconnectTimer, 0);
+	}
+}
+
+void onMqttSubscribe(uint16_t packetId, uint8_t qos)
+{
+	Serial.println("Subscribe acknowledged.");
+	Serial.print("  packetId: ");
+	Serial.println(packetId);
+	Serial.print("  qos: ");
+	Serial.println(qos);
+	tmeSleep = millis();
+}
+
+void onMqttUnsubscribe(uint16_t packetId)
+{
+	Serial.println("Unsubscribe acknowledged.");
+	Serial.print("  packetId: ");
+	Serial.println(packetId);
+	tmeSleep = millis();
 }
 
 void onMqttPublish(uint16_t packetId)
@@ -664,6 +697,7 @@ void onMqttPublish(uint16_t packetId)
 	Serial.println("Publish acknowledged.");
 	Serial.print("  packetId: ");
 	Serial.println(packetId);
+	tmeSleep = millis();
 }
 
 void timerEventos()
@@ -679,4 +713,34 @@ void timerEventos()
 	mqttClient.onMessage(onMqttMessage);
 	mqttClient.onPublish(onMqttPublish);
 	mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+}
+
+void print_wakeup_reason()
+{
+	esp_sleep_wakeup_cause_t wakeup_reason;
+
+	wakeup_reason = esp_sleep_get_wakeup_cause();
+
+	switch (wakeup_reason)
+	{
+	case 1:
+		Serial.println("Wakeup caused by external signal using RTC_IO");
+		activaAlarma = true;
+		break;
+	case 2:
+		Serial.println("Wakeup caused by external signal using RTC_CNTL");
+		break;
+	case 3:
+		Serial.println("Wakeup caused by timer");
+		break;
+	case 4:
+		Serial.println("Wakeup caused by touchpad");
+		break;
+	case 5:
+		Serial.println("Wakeup caused by ULP program");
+		break;
+	default:
+		Serial.println("Wakeup was not caused by deep sleep");
+		break;
+	}
 }
