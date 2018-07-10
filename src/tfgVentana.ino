@@ -21,13 +21,13 @@ extern "C"
 //const GPIO
 static const int buttonPin = 19;
 static const int led = 5;
-static const int mini_reed_swtich_pin = 33;
+static const int mini_reed_swtich_pin = 13;
 static const int actmedBateria = 32;
 static const int analogMedBateria = 36;
 
 /* DeepSleep timer */
 #define uS_TO_S_FACTOR 1000000 /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP 180	   /* Time ESP32 will go to sleep (in seconds) */
+#define TIME_TO_SLEEP 60	   /* Time ESP32 will go to sleep (in seconds) */
 RTC_DATA_ATTR int estadoAlarmaRTC = 0;
 
 //var
@@ -42,9 +42,9 @@ static int memValuesWifi = 25;
 static int cuentaReedRelay = 0;
 static int cuenta = 0;
 static int cuentaBateria = 0;
-static uint16_t timeKeepAlive = 19000; // Tiempo que debe pasar para cambiar el estado del dispositivo a desconectado
+static uint16_t timeKeepAlive = 700; // Tiempo que debe pasar para cambiar el estado del dispositivo a desconectado
 static uint32_t timeout = 1000;
-static int tmeWatchDog = 50000000; //set time in us WATCHDOG
+static int tmeWatchDog = 30000000; //set time in us WATCHDOG
 String esid = "";
 String cadenaSSID = "";
 String cadenaPSK = "";
@@ -71,6 +71,10 @@ TimerHandle_t wifiReconnectTimer;
 
 /* Constantes */
 static char msgId[MEM_ID];
+const char ip[] = "192.168.2.20";
+const char pass[] = "BeNq_42?";
+const char usuario[] = "usuario1";
+const int port = 1883; 
 static const String ConstanteElimina = "elimina";
 static const String Nuevo = "nuevo";
 static const String Bateria = "bateria";
@@ -104,7 +108,7 @@ void setup()
 	pinMode(mini_reed_swtich_pin, INPUT_PULLUP);
 	pinMode(actmedBateria, OUTPUT);
 
-	// TODO: Pruebas medicion tiempo DeepSleep reconexion
+	// Medicion tiempo DeepSleep reconexion
 	esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
 	esp_sleep_enable_ext0_wakeup(GPIO_NUM_33, 1); //1 = High, 0 = Low
 	Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) +
@@ -245,7 +249,6 @@ void setup()
 		}
 	}
 
-	// TODO: Abrir una conexion de mqtt sin encriptar por rapidez para mandar la alarma por el puerto 8080
 	Serial.print("estadoAlarmaRTC: ");
 	Serial.println(String(estadoAlarmaRTC));
 	if (estadoAlarmaRTC)
@@ -274,7 +277,7 @@ void setup()
 		client.publish(ID_REGISTRA, (char *)mensajeEnvio.c_str(), false, 2);
 		//Serial.println("Se crea el topic" + esid);
 		Serial.println("Subscrito a: " + esid);
-		client.subscribe((char *)esid.c_str(), 2); //Reset ID
+		client.subscribe((char *)esid.c_str()); //Reset ID
 	}
 	else
 	{
@@ -287,7 +290,6 @@ void setup()
 	}
 	/**/
 
-	// TODO: Quitar, pruebas medicion setup
 	Serial.print("setup time is = ");
 	tme = millis() - tme;
 	Serial.println(tme);
@@ -299,13 +301,9 @@ void loop()
 	
 	client.loop();
 	delay(10); // <- fixes some issues with WiFi stability
-
-	if (!client.connected())
-	{
-		//Serial.println("cliente desconectado");
-		//delay(1000000000);
-		connect();
-	}
+	if (!client.connected()) {
+    	connect();
+  	}
 
 	/* Reset SSID y PassWord WiFi */
 	pulsacionLarga();
@@ -317,6 +315,9 @@ void loop()
 	//Serial.print("loop time is = ");
 	//tme = millis() - tme;
 	//Serial.println(tme);
+	
+	/* Watchdog, evitamos que se vaya a dormir porque esta activo */
+	timerWrite(timer, 0); //reset timer (feed watchdog)
 }
 
 void readBateria()
@@ -399,8 +400,6 @@ void readReedRelay()
 		store_value = digitalRead(mini_reed_swtich_pin);
 		if (store_value)
 		{
-			/* Watchdog, evitamos que se vaya a dormir porque esta activo */
-			timerWrite(timer, 0); //reset timer (feed watchdog)
 			if (pasaAlarma)
 			{
 				mensajeEnvio = "";
@@ -535,7 +534,7 @@ void connect()
 	}
 
 	Serial.print("\nconnecting to MQTT...");
-	while (!client.connect(macEsp, "usuario1", "BeNq_42?")) //TODO: usuario en constantes y meter el connect en while
+	while (!client.connect(macEsp, usuario, pass))
 	{
 
 		Serial.print(".");
@@ -544,10 +543,10 @@ void connect()
 
 	Serial.println("Connected to MQTT.");
 
-	client.subscribe(macEsp, 2);
+	client.subscribe(macEsp);
 	Serial.println("Subscrito a: " + String(macEsp));
 	estadoAlarmaTopic = conf_alarma + '/' + macEsp;
-	client.subscribe((char *)estadoAlarmaTopic.c_str(), 2);
+	client.subscribe((char *)estadoAlarmaTopic.c_str());
 	Serial.println("Subscrito a: " + String(estadoAlarmaTopic));
 
 	/** Mensaje estado de la conexion*/
@@ -559,8 +558,8 @@ void connect()
 }
 
 void configuraClientMqtt()
-{
-	client.begin("192.168.2.20", 1883, net);
+{   
+	client.begin(ip, port, net);
 	client.onMessage(messageReceived);
 	client.setOptions(timeKeepAlive, false, timeout); //Se mantiene la sesion
 	/** Mensaje de aviso si se pierde la conexion*/
@@ -600,8 +599,11 @@ void WiFiEvent(WiFiEvent_t event)
 void reconnectWiFi()
 {
 	Serial.println("reconectando WiFi");
-	WiFi.disconnect(true);
+	WiFi.mode(WIFI_OFF);
+	WiFi.mode(WIFI_STA);
 	WiFi.begin(cadenaSSID.c_str(), cadenaPSK.c_str());
+	configuraClientMqtt();
+	connect();
 }
 
 void timerEventos()
@@ -674,7 +676,7 @@ void messageReceived(String &topic, String &payload)
 		client.unsubscribe((char *)esid.c_str()); //Reset ID
 		esid = cadena;
 		Serial.println("Subscrito a: " + esid);
-		client.subscribe((char *)esid.c_str(), 2); //Reset ID
+		client.subscribe((char *)esid.c_str()); //Reset ID
 		Serial.println("writing eeprom ssid:");
 		for (int i = MEM_DIR_ID; i < aux.length() + MEM_DIR_ID; ++i)
 		{
@@ -686,8 +688,6 @@ void messageReceived(String &topic, String &payload)
 	}
 	else if (strcmp((char *)topic.c_str(), (char *)estadoAlarmaTopic.c_str()) == 0)
 	{
-		/* Watchdog */
-		timerWrite(timer, 0); //reset timer (feed watchdog)
 		//long tme = millis();
 		//Serial.println("running mainloop");
 		
@@ -714,7 +714,7 @@ void messageReceived(String &topic, String &payload)
 			/* Entramos en modo deep-sleep */
 			Serial.println("Going to sleep now");
 			esp_deep_sleep_start();
-		}else if(!store_value && activaAlarma){
+		}else{
 			/* Entramos en modo deep-sleep */
 			Serial.println("Going to sleep now");
 			esp_deep_sleep_start();
@@ -724,7 +724,7 @@ void messageReceived(String &topic, String &payload)
 
 void IRAM_ATTR resetModule()
 {
-	ets_printf("reboot\n");
+	ets_printf("Reiniciando watchdog expired\n");
 	esp_restart_noos();
 }
 
