@@ -23,6 +23,11 @@ static const int mini_reed_swtich_pin = 13;
 static const int actmedBateria = 17;
 static const int analogMedBateria = 36;
 
+/* DeepSleep timer */
+#define uS_TO_S_FACTOR 1000000 /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP 60	   /* Time ESP32 will go to sleep (in seconds) */
+RTC_DATA_ATTR int estadoAlarmaRTC = 0;
+
 //var
 static bool pasa = true;
 static bool pasaAlarma = true;
@@ -42,6 +47,9 @@ String cadenaPSK = "";
 String estadoAlarma;
 char macEsp[10];
 String estadoAlarmaTopic;
+long tme;
+long tmeSleep;
+
 
 /* ReedRelay */
 static const char *activar = "I";
@@ -89,6 +97,14 @@ void setup()
 	pinMode(led, OUTPUT);
 	pinMode(mini_reed_swtich_pin, INPUT_PULLUP);
 	pinMode(actmedBateria, OUTPUT);
+
+	// Medicion tiempo DeepSleep reconexion
+	esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+	esp_sleep_enable_ext0_wakeup(GPIO_NUM_33, 1); //1 = High, 0 = Low
+	Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) +
+				   " Seconds");
+	tme = millis();
+	/***/
 
 	/* EEPROM */
 	EEPROM.begin(MEM_TOTAL);
@@ -260,6 +276,13 @@ void setup()
 		mqttClient.publish(ID_REGISTRA, 2, false, (char *)aux.c_str());
 	}
 	/**/
+
+	Serial.print("setup time is = ");
+	tme = millis() - tme;
+	Serial.println(tme);
+	
+	// Inicio de tiempo para intervalo sin datos en recepcion para sleep	
+	tmeSleep = millis();
 }
 
 void loop()
@@ -270,6 +293,13 @@ void loop()
 	readReedRelay();
 	/* Actualizamos la bateria cada 20 minutos*/
 	readBateria();
+
+	long tmePasa = millis() - tmeSleep;
+	if(tmePasa > 10000){
+		/* Entramos en modo deep-sleep */
+		Serial.println("Going to sleep now usually");
+		esp_deep_sleep_start();
+	}
 }
 void readBateria()
 {
@@ -551,6 +581,9 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
 {
 	Serial.print("\r\nMessage received: ");
 	Serial.println(topic);
+
+	tmeSleep = millis();
+
 	String aux;
 	String datosHashtag;
 	int hashtag = 0;
