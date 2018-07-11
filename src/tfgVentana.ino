@@ -255,10 +255,10 @@ void setup()
 		mensajeEnvio = "";
 		mensajeEnvio = constIdRegistra + '#' + esid + '#' + macEsp + '#';
 		Serial.println("Publish: " + mensajeEnvio);
-		mqttClient.publish(ID_REGISTRA, 1, false, (char *)mensajeEnvio.c_str());
+		mqttClient.publish(ID_REGISTRA, 2, false, (char *)mensajeEnvio.c_str());
 		//Serial.println("Se crea el topic" + esid);
 		Serial.println("Subscrito a: " + esid);
-		mqttClient.subscribe((char *)esid.c_str(), 1); //Reset ID
+		mqttClient.subscribe((char *)esid.c_str(), 2); //Reset ID
 	}
 	else
 	{
@@ -268,7 +268,7 @@ void setup()
 		mensajeEnvio = Nuevo + '#' + String(macEsp) + '#' + tipo + '#' + claveDisp + '#';
 		Serial.print(aux);
 		Serial.println("Publish: " + mensajeEnvio);
-		mqttClient.publish(ID_REGISTRA, 1, false, (char *)mensajeEnvio.c_str());
+		mqttClient.publish(ID_REGISTRA, 2, false, (char *)mensajeEnvio.c_str());
 	}
 	/**/
 
@@ -420,10 +420,10 @@ void onMqttConnect(bool sessionPresent)
 	Serial.print("Session present: ");
 	Serial.println(sessionPresent);
 
-	mqttClient.subscribe(macEsp, 1);
+	mqttClient.subscribe(macEsp, 2);
 	Serial.println("Subscrito a: " + String(macEsp));
 	estadoInterruptorTopic = conf_interruptor + '/' + macEsp;
-	mqttClient.subscribe((char *)estadoInterruptorTopic.c_str(), 1);
+	mqttClient.subscribe((char *)estadoInterruptorTopic.c_str(), 2);
 	Serial.println("Subscrito a: " + String(estadoInterruptorTopic));
 
 	/** Mensaje estado de la conexion*/
@@ -525,7 +525,7 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
 		mqttClient.unsubscribe((char *)esid.c_str()); //Reset ID
 		esid = cadena;
 		Serial.println("Subscrito a: " + esid);
-		mqttClient.subscribe((char *)esid.c_str(), 1); //Reset ID
+		mqttClient.subscribe((char *)esid.c_str(), 2); //Reset ID
 		Serial.println("writing eeprom ssid:");
 		for (int i = MEM_DIR_ID; i < aux.length() + MEM_DIR_ID; ++i)
 		{
