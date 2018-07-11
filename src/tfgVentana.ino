@@ -27,6 +27,8 @@ static const int analogMedBateria = 36;
 #define uS_TO_S_FACTOR 1000000 /* Conversion factor for micro seconds to seconds */
 #define TIME_TO_SLEEP 60	   /* Time ESP32 will go to sleep (in seconds) */
 
+RTC_DATA_ATTR int wakeSleep = 0;
+
 //var
 static bool pasa = true;
 static bool pasaAlarma = true;
@@ -40,7 +42,7 @@ static int memValuesWifi = 25;
 static int cuentaReedRelay = 0;
 static int cuenta = 0;
 static int cuentaBateria = 0;
-static int timeKeepAlive = 70;	 // Tiempo que debe pasar para cambiar el estado del dispositivo a desconectado
+static int timeKeepAlive = 100;	 // Tiempo que debe pasar para cambiar el estado del dispositivo a desconectado
 static int tmeWatchDog = 30000000; //set time in us WATCHDOG
 String esid = "";
 String cadenaSSID = "";
@@ -270,6 +272,7 @@ void setup()
 		mqttClient.publish(ALARMA, 1, false, (char *)mensajeEnvio.c_str());
 		pasaAlarma = false;
 		cerradoAlarma = true;
+		wakeSleep = 0;
 	}
 
 	/* Si el valor leido de memoria en el inicio es valido, se comprueba si existe en la casa
@@ -425,17 +428,19 @@ void readReedRelay()
 
 				pasaAlarma = false;
 				cerradoAlarma = true;
+				wakeSleep = 0;
 			}
 		}
 		if (!store_value)
 		{
-			if (cerradoAlarma)
+			if (cerradoAlarma && !wakeSleep)
 			{
 				pasaAlarma = true;
 				String aux = alarma + '#' + esid + '#' + cerrado + '#';
 				Serial.println("Publish: " + aux);
 				mqttClient.publish(ALARMA, 1, false, (char *)aux.c_str());
 				cerradoAlarma = false;
+				wakeSleep = 1;
 			}
 		}
 	}
