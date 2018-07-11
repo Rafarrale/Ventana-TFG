@@ -269,7 +269,7 @@ void setup()
 		String mensajeEnvio = "";
 		mensajeEnvio = alarma + '#' + esid + '#' + activar + '#';
 		Serial.println("Publish: " + mensajeEnvio);
-		mqttClient.publish(ALARMA, 1, false, (char *)mensajeEnvio.c_str());
+		mqttClient.publish(ALARMA, 2, false, (char *)mensajeEnvio.c_str());
 		pasaAlarma = false;
 		cerradoAlarma = true;
 		wakeSleep = 0;
@@ -283,10 +283,10 @@ void setup()
 		//**Mensaje ==> idRegistra#esid#*macEsp#/
 		String auxIdRegistra = constIdRegistra + '#' + esid + '#' + macEsp + '#';
 		Serial.println("Publish: " + auxIdRegistra);
-		mqttClient.publish(ID_REGISTRA, 1, false, (char *)auxIdRegistra.c_str());
+		mqttClient.publish(ID_REGISTRA, 2, false, (char *)auxIdRegistra.c_str());
 		//Serial.println("Se crea el topic" + esid);
 		Serial.println("Subscrito a: " + esid);
-		mqttClient.subscribe((char *)esid.c_str(), 1); //Reset ID
+		mqttClient.subscribe((char *)esid.c_str(), 2); //Reset ID
 	}
 	else
 	{
@@ -295,7 +295,7 @@ void setup()
 		String aux = Nuevo + '#' + String(macEsp) + '#' + tipo + '#' + claveDisp + '#';
 		Serial.print(aux);
 		Serial.println("Publish: " + aux);
-		mqttClient.publish(ID_REGISTRA, 1, false, (char *)aux.c_str());
+		mqttClient.publish(ID_REGISTRA, 2, false, (char *)aux.c_str());
 	}
 	/**/
 
@@ -350,7 +350,7 @@ void readBateria()
 		int aux = parseoBateria();
 		String auxRes = Bateria + '#' + esid + '#' + String(aux) + '#';
 		Serial.println("Publish: " + auxRes);
-		mqttClient.publish((char *)Bateria.c_str(), 1, false, (char *)auxRes.c_str());
+		mqttClient.publish((char *)Bateria.c_str(), 2, false, (char *)auxRes.c_str());
 	}
 }
 
@@ -424,7 +424,7 @@ void readReedRelay()
 			{
 				String aux = alarma + '#' + esid + '#' + activar + '#';
 				Serial.println("Publish: " + aux);
-				mqttClient.publish(ALARMA, 1, false, (char *)aux.c_str());
+				mqttClient.publish(ALARMA, 2, false, (char *)aux.c_str());
 
 				pasaAlarma = false;
 				cerradoAlarma = true;
@@ -438,7 +438,7 @@ void readReedRelay()
 				pasaAlarma = true;
 				String aux = alarma + '#' + esid + '#' + cerrado + '#';
 				Serial.println("Publish: " + aux);
-				mqttClient.publish(ALARMA, 1, false, (char *)aux.c_str());
+				mqttClient.publish(ALARMA, 2, false, (char *)aux.c_str());
 				cerradoAlarma = false;
 				wakeSleep = 1;
 			}
@@ -584,17 +584,17 @@ void onMqttConnect(bool sessionPresent)
 	Serial.print("Session present: ");
 	Serial.println(sessionPresent);
 
-	mqttClient.subscribe(macEsp, 1);
+	mqttClient.subscribe(macEsp, 2);
 	Serial.println("Subscrito a: " + String(macEsp));
 	estadoAlarmaTopic = conf_alarma + '/' + macEsp;
-	mqttClient.subscribe((char *)estadoAlarmaTopic.c_str(), 1);
+	mqttClient.subscribe((char *)estadoAlarmaTopic.c_str(), 2);
 	Serial.println("Subscrito a: " + String(estadoAlarmaTopic));
 
 	/** Mensaje estado de la conexion*/
 	String auxEstadoTopic = estado + '/' + macEsp;
 	String auxDatosEstado = estado + '#' + macEsp + '#' + constConectado + '#';
 	Serial.println("Publish: " + auxDatosEstado);
-	mqttClient.publish((char *)auxEstadoTopic.c_str(), 1, true, (char *)auxDatosEstado.c_str());
+	mqttClient.publish((char *)auxEstadoTopic.c_str(), 2, true, (char *)auxDatosEstado.c_str());
 }
 
 void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties properties, size_t length, size_t index, size_t total)
@@ -630,7 +630,7 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
 		/*Tipo de dispositivo del nuevo disp*/
 		String aux = Nuevo + '#' + String(macEsp) + '#' + tipo + '#' + claveDisp + '#';
 		Serial.println("Publish: " + aux);
-		mqttClient.publish(ID_REGISTRA, 1, false, (char *)aux.c_str());
+		mqttClient.publish(ID_REGISTRA, 2, false, (char *)aux.c_str());
 	}
 	else if (strcmp(cadena, (char *)ConstanteConfirmaDispositivos.c_str()) == 0)
 	{
@@ -654,7 +654,7 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
 		// Una vez que ya s� que esta en mi casa, pido que me mande el estado de la alarma
 		String reqAlarma = respAlarma + '#' + nomCasa + '#';
 		Serial.println("Publish: " + reqAlarma);
-		mqttClient.publish((char *)respAlarma.c_str(), 1, false, (char *)reqAlarma.c_str());
+		mqttClient.publish((char *)respAlarma.c_str(), 2, false, (char *)reqAlarma.c_str());
 	}
 	else if (strcmp(topic, macEsp) == 0)
 	{
@@ -663,7 +663,7 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
 		mqttClient.unsubscribe((char *)esid.c_str()); //Reset ID
 		esid = cadena;
 		Serial.println("Subscrito a: " + esid);
-		mqttClient.subscribe((char *)esid.c_str(), 1); //Reset ID
+		mqttClient.subscribe((char *)esid.c_str(), 2); //Reset ID
 		Serial.println("writing eeprom ssid:");
 		for (int i = MEM_DIR_ID; i < aux.length() + MEM_DIR_ID; ++i)
 		{
