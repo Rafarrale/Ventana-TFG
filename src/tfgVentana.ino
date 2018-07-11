@@ -1,13 +1,11 @@
+#include <WiFi.h>
 #include <EEPROM.h>
-#include <WiFiClientSecure.h>
-#include <MQTT.h>
-#include "esp_system.h"
-
 extern "C"
 {
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 }
+#include <AsyncMqttClient.h>
 
 /* ROM */
 #define MEM_ID 24
@@ -23,6 +21,10 @@ static const int buttonPin = 19;
 static const int led = 5;
 static const int interruptor = 13;
 
+/* DeepSleep timer */
+#define uS_TO_S_FACTOR 1000000 /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP 60	   /* Time ESP32 will go to sleep (in seconds) */
+
 //var
 static bool pasa = true;
 static bool activaInterruptor = false;
@@ -30,17 +32,19 @@ static int buttonState = 0;
 static int resetWiFi = 20;
 static int store_value = 0;
 static int memValuesWifi = 25;
-static char ip[] = "192.168.2.20";
-static int port = 1883;
 static int cuenta = 0;
-static int timeKeepAlive = 10; // Tiempo que debe pasar para cambiar el estado del dispositivo a desconectado
-static int timeout = 1000;
+static int timeKeepAlive = 70;	 // Tiempo que debe pasar para cambiar el estado del dispositivo a desconectado
+static int tmeWatchDog = 30000000; //set time in us WATCHDOG
 String esid = "";
 String cadenaSSID = "";
 String cadenaPSK = "";
 String estadoInterruptor;
 char macEsp[10];
 String estadoInterruptorTopic;
+long tme;
+long tmeSleep;
+static long tmeSleepDiferencia = 2000;
+static bool watchMqtt = true;  // Variable usada para prevenir bloqueos con conexion mqtt
 String mensajeEnvio;
 String aux;
 
@@ -48,6 +52,10 @@ String aux;
 hw_timer_t *timer = NULL;
 
 /*MQTT*/
+#define MQTT_HOST IPAddress(192, 168, 2, 20)
+#define MQTT_PORT 1883
+AsyncMqttClient mqttClient;
+TimerHandle_t mqttReconnectTimer;
 TimerHandle_t wifiReconnectTimer;
 
 /* topics */
@@ -73,9 +81,6 @@ static const String validaSsidPsk = "*";
 static const char* constTrue = "true";
 static const char* constFalse = "false";
 
-WiFiClient net;
-MQTTClient client;
-
 void setup()
 {
 	Serial.begin(115200);
@@ -84,11 +89,13 @@ void setup()
 	pinMode(led, OUTPUT);
 	pinMode(interruptor, OUTPUT);
 
-	/* WatchDog */
-	timer = timerBegin(0, 80, true); //timer 0, div 80
-	timerAttachInterrupt(timer, &resetModule, true);
-	timerAlarmWrite(timer, 40000000, false); //set time in us
-	timerAlarmEnable(timer);				 //enable interrupt
+	// Medicion tiempo DeepSleep reconexion
+	esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+	esp_sleep_enable_ext0_wakeup(GPIO_NUM_33, 1); //1 = High, 0 = Low
+	Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) +
+				   " Seconds");
+	tme = millis();
+	/***/
 
 	/* EEPROM */
 	EEPROM.begin(MEM_TOTAL);
@@ -158,16 +165,34 @@ void setup()
 
 		Serial.println("");
 		Serial.println("SmartConfig received.");
+		watchDogInit();
 	}
 	else
 	{
-		Serial.println("Connecting to Wi-Fi...");
-		WiFi.begin(cadenaSSID.c_str(), cadenaPSK.c_str());
+		watchDogInit();
+		connectToWifi();
 	}
 
 	timerEventos();
-	configuraClientMqtt();
-	connect();
+
+	//Wait for WiFi to connect to AP
+	int auxResetWifi = 0;
+	int buttonResetWiFi = 0;
+	Serial.println("Waiting for WiFi");
+	while (WiFi.status() != WL_CONNECTED)
+	{
+		delay(500);
+		Serial.print(".");
+		auxResetWifi++;
+		buttonResetWiFi = digitalRead(buttonPin);
+		if (auxResetWifi == resetWiFi && buttonResetWiFi == HIGH)
+		{
+			Serial.println("reset wifi");
+			resetWiFiSsid();
+			parpadeaLedBloqueante(250, led);
+			ESP.restart();
+		}
+	}
 
 	if (validaSSID == memValuesWifi && validaPsk == memValuesWifi)
 	{
@@ -230,10 +255,10 @@ void setup()
 		mensajeEnvio = "";
 		mensajeEnvio = constIdRegistra + '#' + esid + '#' + macEsp + '#';
 		Serial.println("Publish: " + mensajeEnvio);
-		client.publish(ID_REGISTRA, (char *)mensajeEnvio.c_str(), false, 2);
+		mqttClient.publish(ID_REGISTRA, 1, false, (char *)mensajeEnvio.c_str());
 		//Serial.println("Se crea el topic" + esid);
 		Serial.println("Subscrito a: " + esid);
-		client.subscribe((char *)esid.c_str(), 2); //Reset ID
+		mqttClient.subscribe((char *)esid.c_str(), 1); //Reset ID
 	}
 	else
 	{
@@ -241,34 +266,32 @@ void setup()
 		Serial.println("Mandando peticion nuevo Id: ");
 		mensajeEnvio = "";
 		mensajeEnvio = Nuevo + '#' + String(macEsp) + '#' + tipo + '#' + claveDisp + '#';
+		Serial.print(aux);
 		Serial.println("Publish: " + mensajeEnvio);
-		client.publish(ID_REGISTRA, (char *)mensajeEnvio.c_str(), false, 2);
+		mqttClient.publish(ID_REGISTRA, 1, false, (char *)mensajeEnvio.c_str());
 	}
 	/**/
+
+	Serial.print("setup time is = ");
+	tme = millis() - tme;
+	Serial.println(tme);
+
+	// Inicio de tiempo para intervalo sin datos en recepcion para sleep
+	tmeSleep = millis();
 }
 
 void loop()
 {
-	/* Watchdog */
-	timerWrite(timer, 0); //reset timer (feed watchdog)
-						  //long tme = millis();
-						  //Serial.println("running mainloop");
-
-	client.loop();
-	delay(10); // <- fixes some issues with WiFi stability
-
-	if (!client.connected())
-	{
-		//Serial.println("cliente desconectado");
-		//delay(1000000000);
-		connect();
-	}
-
 	/* Reset SSID y PassWord WiFi */
 	pulsacionLarga();
 
 	/* Activa y desactiva pin interruptor*/
 	confDisp();
+
+	if(watchMqtt){
+		/* Watchdog, evitamos que se vaya a dormir porque esta activo */
+		timerWrite(timer, 0); //reset timer (feed watchdog)
+	}
 
 	//Serial.print("loop time is = ");
 	//tme = millis() - tme;
@@ -286,7 +309,7 @@ void pulsacionLarga()
 			cuenta = ahora;
 			pasa = false;
 		}
-		if (ahora > cuenta + 5000 && digitalRead(led) == HIGH)
+		if (ahora > cuenta + 2000 && digitalRead(led) == HIGH)
 		{
 			resetWiFiSsid();
 			parpadeaLedBloqueante(250, led);
@@ -342,51 +365,30 @@ void parpadeaLedBloqueante(int time, int led)
 		delay(time);
 	}
 }
-
-void connect()
+void connectToWifi()
 {
-	//Wait for WiFi to connect to AP
-	int auxResetWifi = 0;
-	int buttonResetWiFi = 0;
-	Serial.println("Waiting for WiFi");
-	while (WiFi.status() != WL_CONNECTED)
-	{
-		delay(500);
-		Serial.print(".");
-		auxResetWifi++;
-		buttonResetWiFi = digitalRead(buttonPin);
-		if (auxResetWifi == resetWiFi && buttonResetWiFi == HIGH)
-		{
-			Serial.println("reset wifi");
-			resetWiFiSsid();
-			parpadeaLedBloqueante(250, led);
-			ESP.restart();
-		}
-	}
-
-	Serial.print("\nconnecting to MQTT...");
-	while (!client.connect(macEsp)) //TODO: usuario en constantes y meter el connect en while
-	{
-
-		Serial.print(".");
-		delay(1000);
-	}
-
-	Serial.println("Connected to MQTT.");
-
-	client.subscribe(macEsp, 2);
-	Serial.println("Subscrito a: " + String(macEsp));
-	estadoInterruptorTopic = conf_interruptor + '/' + macEsp;
-	client.subscribe((char *)estadoInterruptorTopic.c_str(), 2);
-	Serial.println("Subscrito a: " + String(estadoInterruptorTopic));
-
-	/** Mensaje estado de la conexion*/
-	mensajeEnvio = "";
-	String auxEstadoTopic = estado + '/' + macEsp;
-	mensajeEnvio = estado + '#' + macEsp + '#' + constConectado + '#';
-	Serial.println("Publish: " + mensajeEnvio);
-	client.publish((char *)auxEstadoTopic.c_str(), (char *)mensajeEnvio.c_str(), true, 2);
+	Serial.println("Connecting to Wi-Fi...");
+	WiFi.begin(cadenaSSID.c_str(), cadenaPSK.c_str());
 }
+void connectToMqtt()
+{
+	Serial.println("Connecting to MQTT...");
+	mqttClient.setClientId(macEsp);
+	mqttClient.setCleanSession(false);
+	mqttClient.setKeepAlive(timeKeepAlive);
+	/** Mensaje de aviso si se pierde la conexion*/
+	// TOPIC
+	String topicEstadoDisp = estado + '/' + macEsp;
+	char *aux = new char[topicEstadoDisp.length() + 1];
+	strcpy(aux, topicEstadoDisp.c_str());
+	// MENSAJE
+	String datosEstadoDisp = estado + '#' + macEsp + '#' + constDesconectado + '#';
+	char *auxDatos = new char[datosEstadoDisp.length() + 1];
+	strcpy(auxDatos, datosEstadoDisp.c_str());
+	mqttClient.setWill(aux, 2, true, auxDatos);
+	mqttClient.connect();
+}
+
 
 void WiFiEvent(WiFiEvent_t event)
 {
@@ -397,9 +399,12 @@ void WiFiEvent(WiFiEvent_t event)
 		Serial.println("WiFi connected");
 		Serial.println("IP address: ");
 		Serial.println(WiFi.localIP());
+		connectToMqtt();
 		break;
 	case SYSTEM_EVENT_STA_DISCONNECTED:
 		Serial.println("WiFi lost connection");
+		watchMqtt = false;
+		xTimerStop(mqttReconnectTimer, 0); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
 		xTimerStart(wifiReconnectTimer, 0);
 		break;
 	case SYSTEM_EVENT_STA_LOST_IP:
@@ -407,6 +412,26 @@ void WiFiEvent(WiFiEvent_t event)
 		ESP.restart();
 		break;
 	}
+}
+void onMqttConnect(bool sessionPresent)
+{
+	Serial.println("Connected to MQTT.");
+	watchMqtt = true;
+	Serial.print("Session present: ");
+	Serial.println(sessionPresent);
+
+	mqttClient.subscribe(macEsp, 1);
+	Serial.println("Subscrito a: " + String(macEsp));
+	estadoInterruptorTopic = conf_interruptor + '/' + macEsp;
+	mqttClient.subscribe((char *)estadoInterruptorTopic.c_str(), 1);
+	Serial.println("Subscrito a: " + String(estadoInterruptorTopic));
+
+	/** Mensaje estado de la conexion*/
+	mensajeEnvio = "";
+	String auxEstadoTopic = estado + '/' + macEsp;
+	mensajeEnvio = estado + '#' + macEsp + '#' + constConectado + '#';
+	Serial.println("Publish: " + mensajeEnvio);
+	mqttClient.publish((char *)auxEstadoTopic.c_str(), 2 ,true, (char *)mensajeEnvio.c_str());
 }
 
 void reconnectWiFi()
@@ -418,38 +443,34 @@ void reconnectWiFi()
 
 void timerEventos()
 {
-	wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(5000), pdFALSE, (void *)0, reinterpret_cast<TimerCallbackFunction_t>(reconnectWiFi));
+	mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(5000), pdFALSE, (void *)0, reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
+	wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(5000), pdFALSE, (void *)0, reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
 	WiFi.onEvent(WiFiEvent);
+
+	mqttClient.onConnect(onMqttConnect);
+	mqttClient.onDisconnect(onMqttDisconnect);
+	mqttClient.onSubscribe(onMqttSubscribe);
+	mqttClient.onUnsubscribe(onMqttUnsubscribe);
+	mqttClient.onMessage(onMqttMessage);
+	mqttClient.onPublish(onMqttPublish);
+	mqttClient.setServer(MQTT_HOST, MQTT_PORT);
 }
 
-void configuraClientMqtt()
+void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties properties, size_t length, size_t index, size_t total)
 {
-	client.begin(ip, port, net);
-	client.onMessage(messageReceived);
-	client.setOptions(timeKeepAlive, false, timeout); //Se mantiene la sesion
-	/** Mensaje de aviso si se pierde la conexion*/
-	// TOPIC
-	String topicEstadoDisp = estado + '/' + macEsp;
-	char *aux = new char[topicEstadoDisp.length() + 1];
-	strcpy(aux, topicEstadoDisp.c_str());
-	// MENSAJE
-	mensajeEnvio = "";
-	mensajeEnvio = estado + '#' + macEsp + '#' + constDesconectado + '#';
-	char *auxDatos = new char[mensajeEnvio.length() + 1];
-	strcpy(auxDatos, mensajeEnvio.c_str());
-	client.setWill(aux, auxDatos, true, 2);
-}
+	Serial.print("\r\nMessage received: ");
+	Serial.println(topic);
 
-void messageReceived(String &topic, String &payload)
-{
-	Serial.println("incoming: " + topic + " - " + payload);
+	tmeSleep = millis();
 
+	String aux;
 	String datosHashtag;
 	int hashtag = 0;
 	char *cadena;
-	aux = "";
-	for (int i = 0; i < payload.length(); i++)
+	Serial.print("payload: ");
+	for (int i = 0; i < length; i++)
 	{
+		Serial.print((char)payload[i]);
 		if ((char)payload[i] == '#' || hashtag >= 1)
 		{
 			hashtag++;
@@ -470,7 +491,7 @@ void messageReceived(String &topic, String &payload)
 		mensajeEnvio = "";
 		mensajeEnvio = Nuevo + '#' + String(macEsp) + '#' + tipo + '#' + claveDisp + '#';
 		Serial.println("Publish: " + mensajeEnvio);
-		client.publish(ID_REGISTRA, (char *)mensajeEnvio.c_str(), false, 2);
+		mqttClient.publish(ID_REGISTRA, 2, false, (char *)mensajeEnvio.c_str());
 	}
 	else if (strcmp(cadena, (char *)ConstanteConfirmaDispositivos.c_str()) == 0)
 	{
@@ -495,16 +516,16 @@ void messageReceived(String &topic, String &payload)
 		mensajeEnvio = "";
 		mensajeEnvio = respInterruptor + '#' + nomCasa + '#' + esid + '#';
 		Serial.println("Publish: " + mensajeEnvio);
-		client.publish((char *)respInterruptor.c_str(), (char *)mensajeEnvio.c_str(), false, 2);
+		mqttClient.publish((char *)respInterruptor.c_str(), 2, false, (char *)mensajeEnvio.c_str());
 	}
-	else if (strcmp((char *)topic.c_str(), macEsp) == 0)
+	else if (strcmp(topic, macEsp) == 0)
 	{
 		Serial.println("\r\n Se recibe ID y se configura el ESP");
 		Serial.println("Se unsubscribe " + esid);
-		client.unsubscribe((char *)esid.c_str()); //Reset ID
+		mqttClient.unsubscribe((char *)esid.c_str()); //Reset ID
 		esid = cadena;
 		Serial.println("Subscrito a: " + esid);
-		client.subscribe((char *)esid.c_str(), 2); //Reset ID
+		mqttClient.subscribe((char *)esid.c_str(), 1); //Reset ID
 		Serial.println("writing eeprom ssid:");
 		for (int i = MEM_DIR_ID; i < aux.length() + MEM_DIR_ID; ++i)
 		{
@@ -514,7 +535,7 @@ void messageReceived(String &topic, String &payload)
 		}
 		EEPROM.commit();
 	}
-	else if (strcmp((char *)topic.c_str(), (char *)estadoInterruptorTopic.c_str()) == 0)
+	else if (strcmp(topic, (char *)estadoInterruptorTopic.c_str()) == 0)
 	{
 		Serial.println("\r\nEstado del interruptor: ");
 		Serial.println(aux);
@@ -545,4 +566,48 @@ boolean validaestadoInterruptor()
 	{
 		activaInterruptor = false;
 	}
+}
+
+void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
+{
+	Serial.println("Disconnected from MQTT.");
+	if (WiFi.isConnected())
+	{
+		xTimerStart(mqttReconnectTimer, 0);
+	}
+}
+
+void onMqttSubscribe(uint16_t packetId, uint8_t qos)
+{
+	Serial.println("Subscribe acknowledged.");
+	Serial.print("  packetId: ");
+	Serial.println(packetId);
+	Serial.print("  qos: ");
+	Serial.println(qos);
+	tmeSleep = millis();
+}
+
+void onMqttUnsubscribe(uint16_t packetId)
+{
+	Serial.println("Unsubscribe acknowledged.");
+	Serial.print("  packetId: ");
+	Serial.println(packetId);
+	tmeSleep = millis();
+}
+
+void onMqttPublish(uint16_t packetId)
+{
+	Serial.println("Publish acknowledged.");
+	Serial.print("  packetId: ");
+	Serial.println(packetId);
+	tmeSleep = millis();
+}
+
+void watchDogInit()
+{
+	/* WatchDog */
+	timer = timerBegin(0, 80, true); //timer 0, div 80
+	timerAttachInterrupt(timer, &resetModule, true);
+	timerAlarmWrite(timer, tmeWatchDog, false);
+	timerAlarmEnable(timer); //enable interrupt
 }
