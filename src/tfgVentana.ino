@@ -416,7 +416,7 @@ double ReadVoltage(byte pin)
 void readReedRelay()
 {
 	int ahora = millis();
-	if (ahora > cuentaReedRelay + 500 && validaestadoAlarma())
+	if (ahora > cuentaReedRelay + 500)
 	{
 		cuentaReedRelay = ahora;
 		store_value = digitalRead(mini_reed_swtich_pin);
