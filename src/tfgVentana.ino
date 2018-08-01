@@ -325,6 +325,7 @@ void loop()
 			/* Entramos en modo deep-sleep */
 			Serial.println("Going to sleep now desactivado");
 			WiFi.mode(WIFI_OFF);
+			parpadeaLedBloqueante(150, led);
 			esp_deep_sleep_start();
 		}
 		else
@@ -332,6 +333,7 @@ void loop()
 			/* Entramos en modo deep-sleep */
 			Serial.println("Going to sleep now usually");
 			WiFi.mode(WIFI_OFF);
+			parpadeaLedBloqueante(150, led);
 			esp_deep_sleep_start();
 		}
 	}
