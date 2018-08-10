@@ -315,6 +315,8 @@ void loop()
 	readReedRelay();
 	/* Actualizamos la bateria cada 20 minutos*/
 	readBateria();
+	/* Actualizamos el estado de la bandera activaAlarma */
+	validaestadoAlarma();
 
 	long tmePasa = millis() - tmeSleep;
 	if (tmePasa > tmeSleepDiferencia && reciveAlarm)
