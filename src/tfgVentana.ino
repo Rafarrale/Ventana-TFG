@@ -94,7 +94,7 @@ static const String ConstanteConfirmaCasa = "200";
 static const String ConstanteConfirmaDispositivos = "201";
 static const String validaSsidPsk = "*";
 static const int actBat = 1200000; /* Cambiar aqui el tiempo de actualizacion de la bateria*/
-//const int actBat = 10000;
+//static const int actBat = 10000;
 
 void setup()
 {
@@ -275,6 +275,7 @@ void setup()
 		wakeSleep = 0;
 	}
 
+	readBateria();
 	/* Si el valor leido de memoria en el inicio es valido, se comprueba si existe en la casa
 	en caso de que exista se recibe confirmacion, sino, se elimina de la BBDD*/
 	if (digComp == digAux)
@@ -314,14 +315,14 @@ void loop()
 	/* Alarma Contacto */
 	readReedRelay();
 	/* Actualizamos la bateria cada 20 minutos*/
-	readBateria();
+	//readBateria();
 	/* Actualizamos el estado de la bandera activaAlarma */
 	validaestadoAlarma();
 
 	long tmePasa = millis() - tmeSleep;
 	if (tmePasa > tmeSleepDiferencia && reciveAlarm)
 	{
-		if (!store_value && !activaAlarma || !activaAlarma)
+		if (!store_value && !activaAlarma)
 		{															// si es falso es que se activo la alarma al despertarse
 			esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_EXT0); //1 = High, 0 = Low
 			/* Entramos en modo deep-sleep */
@@ -341,10 +342,10 @@ void loop()
 	}
 
 	if(watchMqtt){
-		/* Watchdog, evitamos que se vaya a dormir porque esta activo */
 		timerWrite(timer, 0); //reset timer (feed watchdog)
 	}
 }
+/*
 void readBateria()
 {
 	int ahora = millis();
@@ -356,6 +357,15 @@ void readBateria()
 		Serial.println("Publish: " + auxRes);
 		mqttClient.publish((char *)Bateria.c_str(), 2, false, (char *)auxRes.c_str());
 	}
+}
+*/
+
+void readBateria()
+{
+		int aux = parseoBateria();
+		String auxRes = Bateria + '#' + esid + '#' + String(aux) + '#';
+		Serial.println("Publish: " + auxRes);
+		mqttClient.publish((char *)Bateria.c_str(), 2, false, (char *)auxRes.c_str());
 }
 
 int parseoBateria()
