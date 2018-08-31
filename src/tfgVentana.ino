@@ -603,12 +603,6 @@ void onMqttConnect(bool sessionPresent)
 	estadoAlarmaTopic = conf_alarma + '/' + macEsp;
 	mqttClient.subscribe((char *)estadoAlarmaTopic.c_str(), 2);
 	Serial.println("Subscrito a: " + String(estadoAlarmaTopic));
-
-	/** Mensaje estado de la conexion*/
-	String auxEstadoTopic = estado + '/' + macEsp;
-	String auxDatosEstado = estado + '#' + macEsp + '#' + constConectado + '#';
-	Serial.println("Publish: " + auxDatosEstado);
-	mqttClient.publish((char *)auxEstadoTopic.c_str(), 2, true, (char *)auxDatosEstado.c_str());
 }
 
 void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties properties, size_t length, size_t index, size_t total)
@@ -669,6 +663,12 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
 		String reqAlarma = respAlarma + '#' + nomCasa + '#';
 		Serial.println("Publish: " + reqAlarma);
 		mqttClient.publish((char *)respAlarma.c_str(), 2, false, (char *)reqAlarma.c_str());
+
+		/** Mensaje estado de la conexion*/
+		String auxEstadoTopic = estado + '/' + macEsp;
+		String auxDatosEstado = estado + '#' + macEsp + '#' + constConectado + '#';
+		Serial.println("Publish: " + auxDatosEstado);
+		mqttClient.publish((char *)auxEstadoTopic.c_str(), 2, true, (char *)auxDatosEstado.c_str());
 	}
 	else if (strcmp(topic, macEsp) == 0)
 	{
