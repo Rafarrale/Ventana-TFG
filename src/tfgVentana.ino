@@ -425,6 +425,7 @@ void onMqttConnect(bool sessionPresent)
 	estadoInterruptorTopic = conf_interruptor + '/' + macEsp;
 	mqttClient.subscribe((char *)estadoInterruptorTopic.c_str(), 2);
 	Serial.println("Subscrito a: " + String(estadoInterruptorTopic));
+}
 
 void reconnectWiFi()
 {
@@ -516,7 +517,6 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
 		mensajeEnvio = estado + '#' + macEsp + '#' + constConectado + '#';
 		Serial.println("Publish: " + mensajeEnvio);
 		mqttClient.publish((char *)auxEstadoTopic.c_str(), 2 ,true, (char *)mensajeEnvio.c_str());
-}
 	}
 	else if (strcmp(topic, macEsp) == 0)
 	{
